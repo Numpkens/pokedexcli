@@ -1,0 +1,16 @@
+# Compiled binaries/executables
+pokedexcli 
+
+# specific executable name
+*.exe
+*.dll
+*.so
+*.dylib
+
+# Folders created by go build
+# (The 'bin' folder is common for local builds)
+/bin/
+
+# Dependency files
+# Vendor folder often used for vendoring dependencies
+/vendor/
