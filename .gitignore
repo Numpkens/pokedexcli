@@ -6,6 +6,7 @@ pokedexcli
 *.dll
 *.so
 *.dylib
+*repl.log
 
 # Folders created by go build
 # (The 'bin' folder is common for local builds)

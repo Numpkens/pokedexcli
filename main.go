@@ -1,7 +1,9 @@
 package main
 
 import (
+	"bufio"
 	"fmt"
+	"os"
 	"strings"
 )
 
@@ -13,12 +15,30 @@ func cleanInput(text string) []string {
 	return words
 }
 
-func main() {
-	// Example usage: Call cleanInput with a test string and assign the result.
-	testString := "  Hello Pokémon World 123 "
-	cleanedWords := cleanInput(testString)
+func startREPL() {
+	scanner := bufio.NewScanner(os.Stdin)
 
-	// Print the result since main() cannot return values.
-	fmt.Println("Original:", testString)
-	fmt.Println("Cleaned:", cleanedWords)
+	for {
+		fmt.Fprintf(os.Stderr, "Pokedex > ")
+
+		if !scanner.Scan() {
+			break // Exit loop on EOF or error.
+		}
+
+		text := scanner.Text()
+		cleaned := cleanInput(text)
+
+		if len(cleaned) == 0 {
+			continue
+		}
+
+		commandName := cleaned[0]
+
+		fmt.Printf("Your command was: %s\n", commandName)
+	}
 }
+
+func main() {
+	startREPL()
+}
+
