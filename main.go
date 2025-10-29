@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math/rand"
 	"net/http"
 	"os"
 	"strings"
@@ -14,11 +15,21 @@ import (
 	"github.com/Numpkens/pokedexcli/internal/pokecache"
 )
 
+type Pokemon struct {
+	Name           string
+	BaseExperience int
+	Height         int
+	Weight         int
+	Stats          map[string]int
+	Types          []string
+}
+
 type config struct {
 	Client              http.Client
 	Cache               pokecache.Cache
 	NextLocationURL     *string
 	PreviousLocationURL *string
+	Pokedex             map[string]Pokemon
 }
 
 type cliCommand struct {
@@ -48,6 +59,28 @@ type PokemonEncounter struct {
 	Pokemon struct {
 		Name string `json:"name"`
 	} `json:"pokemon"`
+}
+
+type PokemonDetailResponse struct {
+	Name           string        `json:"name"`
+	BaseExperience int           `json:"base_experience"`
+	Height         int           `json:"height"`
+	Weight         int           `json:"weight"`
+	Stats          []PokemonStat `json:"stats"`
+	Types          []PokemonType `json:"types"`
+}
+
+type PokemonStat struct {
+	BaseStat int `json:"base_stat"`
+	Stat     struct {
+		Name string `json:"name"`
+	} `json:"stat"`
+}
+
+type PokemonType struct {
+	Type struct {
+		Name string `json:"name"`
+	} `json:"type"`
 }
 
 func fetchData(url string, cfg *config) ([]byte, error) {
@@ -93,7 +126,6 @@ func commandHelp(cfg *config, args []string) error {
 
 	commands := getCommands()
 
-	// Dynamic printing of commands
 	for _, cmd := range commands {
 		fmt.Printf("%s: %s\n", cmd.name, cmd.description)
 	}
@@ -142,7 +174,6 @@ func commandMapb(cfg *config, args []string) error {
 		return err
 	}
 
-	// Unmarshal logic from the old getLocations
 	var locationResp LocationAreaResponse
 	err = json.Unmarshal(data, &locationResp)
 	if err != nil {
@@ -192,7 +223,106 @@ func commandExplore(cfg *config, args []string) error {
 	return nil
 }
 
-// --- Command Registry ---
+func commandCatch(cfg *config, args []string) error {
+	if len(args) == 0 {
+		return errors.New("you must provide a Pokémon name to catch, e.g., catch pikachu")
+	}
+	pokemonName := args[0]
+
+	url := fmt.Sprintf("https://pokeapi.co/api/v2/pokemon/%s", pokemonName)
+
+	fmt.Printf("Throwing a Pokeball at %s...\n", pokemonName)
+
+	data, err := fetchData(url, cfg)
+	if err != nil {
+		if strings.Contains(err.Error(), "bad status code: 404") {
+			return fmt.Errorf("pokemon '%s' not found", pokemonName)
+		}
+		return err
+	}
+
+	var detailResp PokemonDetailResponse
+	err = json.Unmarshal(data, &detailResp)
+	if err != nil {
+		return fmt.Errorf("failed to unmarshal Pokémon detail JSON: %w", err)
+	}
+
+	const maxCatchValue = 300
+	catchThreshold := maxCatchValue - detailResp.BaseExperience
+	roll := rand.Intn(maxCatchValue)
+
+	if roll < catchThreshold {
+		fmt.Printf("%s was caught!\n", pokemonName)
+
+		statsMap := make(map[string]int)
+		for _, s := range detailResp.Stats {
+			statsMap[s.Stat.Name] = s.BaseStat
+		}
+
+		typesList := make([]string, len(detailResp.Types))
+		for i, t := range detailResp.Types {
+			typesList[i] = t.Type.Name
+		}
+
+		cfg.Pokedex[pokemonName] = Pokemon{
+			Name:           pokemonName,
+			BaseExperience: detailResp.BaseExperience,
+			Height:         detailResp.Height,
+			Weight:         detailResp.Weight,
+			Stats:          statsMap,
+			Types:          typesList,
+		}
+
+		fmt.Println("You may now inspect it with the inspect command.")
+	} else {
+		fmt.Printf("%s escaped!\n", pokemonName)
+	}
+
+	return nil
+}
+
+func commandInspect(cfg *config, args []string) error {
+	if len(args) == 0 {
+		return errors.New("you must provide a Pokémon name to inspect, e.g., inspect pidgey")
+	}
+	pokemonName := args[0]
+
+	pokemon, ok := cfg.Pokedex[pokemonName]
+	if !ok {
+		fmt.Printf("you have not caught that pokemon\n")
+		return nil
+	}
+
+	fmt.Printf("Name: %s\n", pokemon.Name)
+	fmt.Printf("Height: %d\n", pokemon.Height)
+	fmt.Printf("Weight: %d\n", pokemon.Weight)
+
+	fmt.Println("Stats:")
+	for name, value := range pokemon.Stats {
+		fmt.Printf("  -%s: %d\n", name, value)
+	}
+
+	fmt.Println("Types:")
+	for _, pType := range pokemon.Types {
+		fmt.Printf("  - %s\n", pType)
+	}
+
+	return nil
+}
+
+func commandPokedex(cfg *config, args []string) error {
+	if len(cfg.Pokedex) == 0 {
+		fmt.Println("Your Pokedex is empty! Go catch some Pokémon!")
+		return nil
+	}
+
+	fmt.Println("Your Pokedex:")
+	for name := range cfg.Pokedex {
+		fmt.Printf(" - %s\n", name)
+	}
+
+	return nil
+}
 
 func getCommands() map[string]cliCommand {
 	return map[string]cliCommand{
@@ -221,10 +351,23 @@ func getCommands() map[string]cliCommand {
 			description: "Displays the Pokémon found in a specific location area",
 			callback:    commandExplore,
 		},
+		"catch": {
+			name:        "catch <pokemon_name>",
+			description: "Attempts to catch a Pokémon",
+			callback:    commandCatch,
+		},
+		"inspect": {
+			name:        "inspect <pokemon_name>",
+			description: "Shows details of a caught Pokémon",
+			callback:    commandInspect,
+		},
+		"pokedex": {
+			name:        "pokedex",
+			description: "Lists all Pokémon you have caught",
+			callback:    commandPokedex,
+		},
 	}
 }
-
-// --- REPL Core Logic ---
 
 func cleanInput(text string) []string {
 	lowered := strings.ToLower(text)
@@ -233,6 +376,8 @@ func cleanInput(text string) []string {
 }
 
 func startREPL() {
+	rand.Seed(time.Now().UnixNano())
+
 	emptyString := ""
 
 	cfg := &config{
@@ -242,6 +387,8 @@ func startREPL() {
 		Cache: pokecache.NewCache(5 * time.Minute),
 
 		PreviousLocationURL: &emptyString,
+
+		Pokedex: make(map[string]Pokemon),
 	}
 
 	initialURL := "https://pokeapi.co/api/v2/location-area/"
